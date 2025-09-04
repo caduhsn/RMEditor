@@ -3,12 +3,14 @@
 	"version-string": "1.0.0",
 	"dependencies": [
 		"asio",
-		"pugixml",
-		"freeglut",
-		"nlohmann-json",
 		"fmt",
+		"nlohmann-json",
+		"pugixml",
+		"zlib",
+		"opengl",
+		"freeglut",
 		"wxwidgets",
-		"opengl"
+		"sccache"
 	],
 	"builtin-baseline": "4a600e9fea71bd7872080cbb716797e04d30e6d3"
 }
