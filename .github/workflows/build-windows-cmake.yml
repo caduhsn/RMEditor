@@ -78,7 +78,7 @@ jobs:
         uses: lukka/get-cmake@main
 
       - name: Run CMake
-        uses: lukka/run-cmake@main
+        uses: lukka/run-vcpkg@v11
         with:
           configurePreset: ${{ matrix.buildtype }}
           buildPreset: ${{ matrix.buildtype }}
