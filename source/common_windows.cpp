@@ -32,6 +32,7 @@
 #include "application.h"
 #include "common_windows.h"
 #include "positionctrl.h"
+#include "preferences.h"
 
 #include "iominimap.h"
 
@@ -68,10 +69,12 @@ MapPropertiesWindow::MapPropertiesWindow(wxWindow* parent, MapTab* view, Editor 
 	// Map version
 	grid_sizer->Add(newd wxStaticText(this, wxID_ANY, "Map Version"));
 	version_choice = newd wxChoice(this, MAP_PROPERTIES_VERSION);
-	version_choice->Append("OTServ 0.5.0");
-	version_choice->Append("OTServ 0.6.0");
-	version_choice->Append("OTServ 0.6.1");
-	version_choice->Append("OTServ 0.7.0 (revscriptsys)");
+	version_choice->Append("0.5.0");
+	version_choice->Append("0.6.0");
+	version_choice->Append("0.6.1");
+	version_choice->Append("0.7.0 (revscriptsys)");
+	version_choice->Append("1.0.0");
+	version_choice->Append("1.1.0 (revscriptsys)");
 
 	switch (map.getVersion().otbm) {
 		case MAP_OTBM_1:
@@ -86,19 +89,17 @@ MapPropertiesWindow::MapPropertiesWindow(wxWindow* parent, MapTab* view, Editor 
 		case MAP_OTBM_4:
 			version_choice->SetSelection(3);
 			break;
+		case MAP_OTBM_5:
+			version_choice->SetSelection(4);
+			break;
+		case MAP_OTBM_6:
+			version_choice->SetSelection(5);
+			break;
 		default:
 			version_choice->SetSelection(0);
 	}
 
 	grid_sizer->Add(version_choice, wxSizerFlags(1).Expand());
-
-	// Version
-	grid_sizer->Add(newd wxStaticText(this, wxID_ANY, "Client Version"));
-	protocol_choice = newd wxChoice(this, wxID_ANY);
-
-	protocol_choice->SetStringSelection(wxstr(g_gui.GetCurrentVersion().getName()));
-
-	grid_sizer->Add(protocol_choice, wxSizerFlags(1).Expand());
 
 	// Dimensions
 	grid_sizer->Add(newd wxStaticText(this, wxID_ANY, "Map Dimensions"));
@@ -155,44 +156,10 @@ MapPropertiesWindow::MapPropertiesWindow(wxWindow* parent, MapTab* view, Editor 
 
 	SetSizerAndFit(topsizer);
 	Centre(wxBOTH);
-	UpdateProtocolList();
-
-	ClientVersion* current_version = ClientVersion::get(map.getVersion().client);
-	protocol_choice->SetStringSelection(wxstr(current_version->getName()));
-}
-
-void MapPropertiesWindow::UpdateProtocolList() {
-	wxString ver = version_choice->GetStringSelection();
-	wxString client = protocol_choice->GetStringSelection();
-
-	protocol_choice->Clear();
-
-	ClientVersionList versions;
-	if (g_settings.getInteger(Config::USE_OTBM_4_FOR_ALL_MAPS)) {
-		versions = ClientVersion::getAllVisible();
-	} else {
-		MapVersionID map_version = MAP_OTBM_1;
-		if (ver.Contains("0.5.0")) {
-			map_version = MAP_OTBM_1;
-		} else if (ver.Contains("0.6.0")) {
-			map_version = MAP_OTBM_2;
-		} else if (ver.Contains("0.6.1")) {
-			map_version = MAP_OTBM_3;
-		} else if (ver.Contains("0.7.0")) {
-			map_version = MAP_OTBM_4;
-		}
-
-		ClientVersionList protocols = ClientVersion::getAllForOTBMVersion(map_version);
-		for (ClientVersionList::const_iterator p = protocols.begin(); p != protocols.end(); ++p) {
-			protocol_choice->Append(wxstr((*p)->getName()));
-		}
-	}
-	protocol_choice->SetSelection(0);
-	protocol_choice->SetStringSelection(client);
 }
 
 void MapPropertiesWindow::OnChangeVersion(wxCommandEvent &) {
-	UpdateProtocolList();
+	//
 }
 
 struct MapConversionContext {
@@ -211,14 +178,14 @@ struct MapConversionContext {
 	NpcMap npcType;
 
 	void operator()(Map &map, Tile* tile, long long done) {
-		if (tile->monster) {
-			MonsterMap::iterator f = monsterType.find(tile->monster->getName());
-			if (f == monsterType.end()) {
-				MonsterInfo info = {
-					tile->monster->getName(),
-					tile->monster->getLookType()
+		for (const auto monster : tile->monsters) {
+			const auto it = monsterType.find(monster->getName());
+			if (it == monsterType.end()) {
+				MonsterInfo monsterInfo = {
+					monster->getName(),
+					monster->getLookType()
 				};
-				monsterType[tile->monster->getName()] = info;
+				monsterType[monster->getName()] = monsterInfo;
 			}
 		}
 		if (tile->npc) {
@@ -241,7 +208,6 @@ void MapPropertiesWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 
 	wxString ver = version_choice->GetStringSelection();
 
-	new_ver.client = ClientVersion::get(nstr(protocol_choice->GetStringSelection()))->getID();
 	if (ver.Contains("0.5.0")) {
 		new_ver.otbm = MAP_OTBM_1;
 	} else if (ver.Contains("0.6.0")) {
@@ -250,9 +216,13 @@ void MapPropertiesWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 		new_ver.otbm = MAP_OTBM_3;
 	} else if (ver.Contains("0.7.0")) {
 		new_ver.otbm = MAP_OTBM_4;
+	} else if (ver.Contains("1.0.0")) {
+		new_ver.otbm = MAP_OTBM_5;
+	} else if (ver.Contains("1.1.0")) {
+		new_ver.otbm = MAP_OTBM_6;
 	}
 
-	if (new_ver.client != old_ver.client) {
+	if (new_ver.otbm != old_ver.otbm) {
 		if (g_gui.GetOpenMapCount() > 1) {
 			g_gui.PopupDialog(this, "Error", "You can not change editor version with multiple maps open", wxOK);
 			return;
@@ -264,7 +234,7 @@ void MapPropertiesWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 		g_gui.GetCurrentEditor()->getSelection().clear();
 		g_gui.GetCurrentEditor()->clearActions();
 
-		if (new_ver.client < old_ver.client) {
+		if (new_ver.otbm < old_ver.otbm) {
 			int ret = g_gui.PopupDialog(this, "Notice", "Converting to a previous version may have serious side-effects, are you sure you want to do this?", wxYES | wxNO);
 			if (ret != wxID_YES) {
 				return;
@@ -279,10 +249,18 @@ void MapPropertiesWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 			map.convert(new_ver, true);
 
 			// Load the new version
-			if (!g_gui.LoadVersion(new_ver.client, error, warnings)) {
+			if (!g_gui.loadMapWindow(error, warnings)) {
 				g_gui.ListDialog(this, "Warnings", warnings);
 				g_gui.PopupDialog(this, "Map Loader Error", error, wxOK);
 				g_gui.PopupDialog(this, "Conversion Error", "Could not convert map. The map will now be closed.", wxOK);
+
+				auto clientDirectory = ClientAssets::getPath().ToStdString() + "/";
+				if (clientDirectory.empty() || !wxDirExists(wxString(clientDirectory))) {
+					PreferencesWindow dialog(nullptr);
+					dialog.getBookCtrl().SetSelection(4);
+					dialog.ShowModal();
+					dialog.Destroy();
+				}
 
 				EndModal(0);
 				return;
@@ -331,10 +309,18 @@ void MapPropertiesWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 			map.cleanInvalidTiles(true);
 		} else {
 			UnnamedRenderingLock();
-			if (!g_gui.LoadVersion(new_ver.client, error, warnings)) {
+			if (!g_gui.loadMapWindow(error, warnings)) {
 				g_gui.ListDialog(this, "Warnings", warnings);
 				g_gui.PopupDialog(this, "Map Loader Error", error, wxOK);
 				g_gui.PopupDialog(this, "Conversion Error", "Could not convert map. The map will now be closed.", wxOK);
+
+				auto clientDirectory = ClientAssets::getPath().ToStdString() + "/";
+				if (clientDirectory.empty() || !wxDirExists(wxString(clientDirectory))) {
+					PreferencesWindow dialog(nullptr);
+					dialog.getBookCtrl().SetSelection(4);
+					dialog.ShowModal();
+					dialog.Destroy();
+				}
 
 				EndModal(0);
 				return;
@@ -529,7 +515,7 @@ EVT_CHOICE(wxID_ANY, ExportMiniMapWindow::OnExportTypeChange)
 END_EVENT_TABLE()
 
 ExportMiniMapWindow::ExportMiniMapWindow(wxWindow* parent, Editor &editor) :
-	wxDialog(parent, wxID_ANY, "Export Minimap", wxDefaultPosition, wxSize(400, 300)),
+	wxDialog(parent, wxID_ANY, "Export Minimap", wxDefaultPosition, wxSize(400, 350)),
 	editor(editor) {
 	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
 	wxSizer* tmpsizer;
@@ -548,6 +534,22 @@ ExportMiniMapWindow::ExportMiniMapWindow(wxWindow* parent, Editor &editor) :
 	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Output Folder");
 	tmpsizer->Add(directory_text_field, 1, wxALL, 5);
 	tmpsizer->Add(newd wxButton(this, MAP_WINDOW_FILE_BUTTON, "Browse"), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxALL | wxEXPAND, 5);
+
+	// Format options
+	wxArrayString imageFormatChoices;
+	imageFormatChoices.Add("64x64");
+	imageFormatChoices.Add("128x128");
+	imageFormatChoices.Add("256x256");
+	imageFormatChoices.Add("512x512");
+	imageFormatChoices.Add("1024x1024");
+	imageFormatChoices.Add("2048x2048");
+	imageFormatChoices.Add("4096x4096");
+	imageSizeOptions = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, imageFormatChoices);
+	imageSizeOptions->SetSelection(0);
+	imageSizeOptions->Disable();
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Image Size");
+	tmpsizer->Add(imageSizeOptions, 1, wxALL, 5);
 	sizer->Add(tmpsizer, 0, wxALL | wxEXPAND, 5);
 
 	// File name
@@ -602,6 +604,7 @@ ExportMiniMapWindow::ExportMiniMapWindow(wxWindow* parent, Editor &editor) :
 ExportMiniMapWindow::~ExportMiniMapWindow() = default;
 
 void ExportMiniMapWindow::OnExportTypeChange(wxCommandEvent &event) {
+	imageSizeOptions->Enable(event.GetSelection() > 0);
 	floor_number->Enable(event.GetSelection() == 2);
 }
 
@@ -627,6 +630,35 @@ void ExportMiniMapWindow::OnFileNameChanged(wxKeyEvent &event) {
 void ExportMiniMapWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 	g_gui.CreateLoadBar("Exporting minimap...");
 
+	const auto imageSizeSelection = imageSizeOptions->GetSelection();
+	int imageSize = 64;
+	switch (imageSizeSelection) {
+		case 0:
+			imageSize = 64;
+			break;
+		case 1:
+			imageSize = 128;
+			break;
+		case 2:
+			imageSize = 256;
+			break;
+		case 3:
+			imageSize = 512;
+			break;
+		case 4:
+			imageSize = 1024;
+			break;
+		case 5:
+			imageSize = 2048;
+			break;
+		case 6:
+			imageSize = 4096;
+			break;
+		default:
+			imageSize = 1024;
+			break;
+	}
+
 	auto format = static_cast<MinimapExportFormat>(format_options->GetSelection());
 	auto mode = static_cast<MinimapExportMode>(floor_options->GetSelection());
 	std::string directory = directory_text_field->GetValue().ToStdString();
@@ -635,7 +667,7 @@ void ExportMiniMapWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
 
 	g_settings.setString(Config::MINIMAP_EXPORT_DIR, directory);
 
-	IOMinimap io(&editor, format, mode, true);
+	IOMinimap io(&editor, format, mode, true, imageSize);
 	if (!io.saveMinimap(directory, file_name, floor)) {
 		g_gui.PopupDialog("Error", io.getError(), wxOK);
 	}
@@ -650,6 +682,194 @@ void ExportMiniMapWindow::OnClickCancel(wxCommandEvent &WXUNUSED(event)) {
 }
 
 void ExportMiniMapWindow::CheckValues() {
+	if (directory_text_field->IsEmpty()) {
+		error_field->SetLabel("Type or select an output folder.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	if (file_name_text_field->IsEmpty()) {
+		error_field->SetLabel("Type a name for the file.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	FileName directory(directory_text_field->GetValue());
+
+	if (!directory.Exists()) {
+		error_field->SetLabel("Output folder not found.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	if (!directory.IsDirWritable()) {
+		error_field->SetLabel("Output folder is not writable.");
+		ok_button->Enable(false);
+		return;
+	}
+
+	error_field->SetLabel(wxEmptyString);
+	ok_button->Enable(true);
+}
+
+// ============================================================================
+// Export Tilesets window
+
+BEGIN_EVENT_TABLE(ExportTilesetsWindow, wxDialog)
+EVT_BUTTON(TILESET_FILE_BUTTON, ExportTilesetsWindow::OnClickBrowse)
+EVT_BUTTON(wxID_OK, ExportTilesetsWindow::OnClickOK)
+EVT_BUTTON(wxID_CANCEL, ExportTilesetsWindow::OnClickCancel)
+END_EVENT_TABLE()
+
+ExportTilesetsWindow::ExportTilesetsWindow(wxWindow* parent, Editor &editor) :
+	wxDialog(parent, wxID_ANY, "Export Tilesets", wxDefaultPosition, wxSize(400, 230)),
+	editor(editor) {
+	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
+	wxSizer* tmpsizer;
+
+	// Error field
+	error_field = newd wxStaticText(this, wxID_VIEW_DETAILS, "", wxDefaultPosition, wxDefaultSize);
+	error_field->SetForegroundColour(*wxRED);
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	tmpsizer->Add(error_field, 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	// Output folder
+	directory_text_field = newd wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize);
+	directory_text_field->Bind(wxEVT_KEY_UP, &ExportTilesetsWindow::OnDirectoryChanged, this);
+	directory_text_field->SetValue(wxString(g_settings.getString(Config::TILESET_EXPORT_DIR)));
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Output Folder");
+	tmpsizer->Add(directory_text_field, 1, wxALL, 5);
+	tmpsizer->Add(newd wxButton(this, TILESET_FILE_BUTTON, "Browse"), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxALL | wxEXPAND, 5);
+
+	// File name
+	file_name_text_field = newd wxTextCtrl(this, wxID_ANY, "tilesets", wxDefaultPosition, wxDefaultSize);
+	file_name_text_field->Bind(wxEVT_KEY_UP, &ExportTilesetsWindow::OnFileNameChanged, this);
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "File Name");
+	tmpsizer->Add(file_name_text_field, 1, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	// OK/Cancel buttons
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	tmpsizer->Add(ok_button = newd wxButton(this, wxID_OK, "OK"), wxSizerFlags(1).Center());
+	tmpsizer->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), wxSizerFlags(1).Center());
+	sizer->Add(tmpsizer, 0, wxCENTER, 10);
+
+	SetSizer(sizer);
+	Layout();
+	Centre(wxBOTH);
+	CheckValues();
+}
+
+ExportTilesetsWindow::~ExportTilesetsWindow() = default;
+
+void ExportTilesetsWindow::OnClickBrowse(wxCommandEvent &WXUNUSED(event)) {
+	wxDirDialog dialog(NULL, "Select the output folder", "", wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+	if (dialog.ShowModal() == wxID_OK) {
+		const wxString &directory = dialog.GetPath();
+		directory_text_field->ChangeValue(directory);
+	}
+	CheckValues();
+}
+
+void ExportTilesetsWindow::OnDirectoryChanged(wxKeyEvent &event) {
+	CheckValues();
+	event.Skip();
+}
+
+void ExportTilesetsWindow::OnFileNameChanged(wxKeyEvent &event) {
+	CheckValues();
+	event.Skip();
+}
+
+void ExportTilesetsWindow::OnClickOK(wxCommandEvent &WXUNUSED(event)) {
+	g_gui.CreateLoadBar("Exporting Tilesets");
+
+	try {
+		FileName directory(directory_text_field->GetValue());
+		g_settings.setString(Config::TILESET_EXPORT_DIR, directory_text_field->GetValue().ToStdString());
+
+		FileName file(file_name_text_field->GetValue() + ".xml");
+		file.Normalize(wxPATH_NORM_DOTS | wxPATH_NORM_TILDE | wxPATH_NORM_CASE | wxPATH_NORM_ABSOLUTE, directory.GetFullPath());
+
+		pugi::xml_document doc;
+		pugi::xml_node node = doc.append_child("materials");
+
+		std::map<std::string, TilesetCategoryType> palettes {
+			{ "Terrain", TILESET_TERRAIN },
+			{ "Doodad", TILESET_DOODAD },
+			{ "Items", TILESET_ITEM },
+			{ "Raw", TILESET_RAW }
+		};
+		for (TilesetContainer::iterator iter = g_materials.tilesets.begin(); iter != g_materials.tilesets.end(); ++iter) {
+			std::string _data = iter->second->name;
+			std::transform(_data.begin(), _data.end(), _data.begin(), [](unsigned char c) { return std::tolower(c); });
+			if (_data == "others") {
+				bool blocked = 1;
+
+				for (const auto &kv : palettes) {
+					TilesetCategory* tilesetCategory = iter->second->getCategory(kv.second);
+
+					if (kv.second != TILESET_RAW && tilesetCategory->brushlist.size() > 0) {
+						blocked = 0;
+					}
+				}
+
+				if (blocked) {
+					continue;
+				}
+			}
+
+			pugi::xml_node tileset = node.append_child("tileset");
+			tileset.append_attribute("name") = iter->second->name.c_str();
+
+			for (const auto &kv : palettes) {
+				TilesetCategory* tilesetCategory = iter->second->getCategory(kv.second);
+
+				if (tilesetCategory->brushlist.size() > 0) {
+					std::string data = kv.first;
+					std::transform(data.begin(), data.end(), data.begin(), [](unsigned char c) { return std::tolower(c); });
+
+					pugi::xml_node palette = tileset.append_child(data.c_str());
+					for (BrushVector::const_iterator _iter = tilesetCategory->brushlist.begin(); _iter != tilesetCategory->brushlist.end(); ++_iter) {
+						if (!(*_iter)->isRaw()) {
+							pugi::xml_node brush = palette.append_child("brush");
+							brush.append_attribute("name") = (*_iter)->getName().c_str();
+						} else {
+							ItemType &it = g_items[(*_iter)->asRaw()->getItemID()];
+							if (it.id != 0) {
+								pugi::xml_node item = palette.append_child("item");
+								item.append_attribute("id") = it.id;
+							}
+						}
+					}
+				}
+			}
+
+			size_t n = std::distance(tileset.begin(), tileset.end());
+			if (n <= 0) {
+				node.remove_child(tileset);
+			}
+		}
+
+		doc.save_file(file.GetFullPath().mb_str());
+		g_gui.PopupDialog("Successfully saved Tilesets", "Saved tilesets to '" + std::string(file.GetFullPath().mb_str()) + "'", wxOK);
+		g_materials.modify(false);
+	} catch (std::bad_alloc &) {
+		g_gui.PopupDialog("Error", "There is not enough memory available to complete the operation.", wxOK);
+	}
+
+	g_gui.DestroyLoadBar();
+	EndModal(1);
+}
+
+void ExportTilesetsWindow::OnClickCancel(wxCommandEvent &WXUNUSED(event)) {
+	// Just close this window
+	EndModal(0);
+}
+
+void ExportTilesetsWindow::CheckValues() {
 	if (directory_text_field->IsEmpty()) {
 		error_field->SetLabel("Type or select an output folder.");
 		ok_button->Enable(false);
@@ -1013,6 +1233,19 @@ void FindDialogListBox::OnDrawItem(wxDC &dc, const wxRect &rect, size_t n) const
 		Sprite* spr = g_gui.gfx.getSprite(brushlist[n]->getLookID());
 		if (spr) {
 			spr->DrawTo(&dc, SPRITE_SIZE_32x32, rect.GetX(), rect.GetY(), rect.GetWidth(), rect.GetHeight());
+		} else {
+			auto monsterType = g_monsters[brushlist[n]->getName()];
+			NpcType* npcType;
+			if (!monsterType) {
+				npcType = g_npcs[brushlist[n]->getName()];
+			}
+
+			auto lookType = monsterType ? monsterType->outfit.lookType : npcType ? npcType->outfit.lookType
+																				 : 0;
+			auto creatureSprite = g_gui.gfx.getCreatureSprite(lookType);
+			if (creatureSprite) {
+				creatureSprite->DrawTo(&dc, SPRITE_SIZE_32x32, rect.GetX(), rect.GetY(), rect.GetWidth(), rect.GetHeight());
+			}
 		}
 
 		if (IsSelected(n)) {
@@ -1165,6 +1398,11 @@ ObjectPropertiesWindowBase::ObjectPropertiesWindowBase(wxWindow* parent, wxStrin
 	edit_spawn_monster(nullptr),
 	edit_npc(nullptr),
 	edit_spawn_npc(spawnNpc) {
+	////
+}
+
+ObjectPropertiesWindowBase::ObjectPropertiesWindowBase(wxWindow* parent, wxString title, wxPoint position /* = wxDefaultPosition */) :
+	wxDialog(parent, wxID_ANY, title, position, wxSize(600, 400), wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER) {
 	////
 }
 
